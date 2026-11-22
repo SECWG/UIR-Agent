@@ -18,29 +18,51 @@ async function github(path, allowMissing = false) {
   });
   if (allowMissing && response.status === 404) return null;
   if (!response.ok)
-    throw new Error(`GitHub request failed: HTTP ${response.status}`);
+    throw new Error(`GitHub GET ${path} failed: HTTP ${response.status}`);
   return response.json();
 }
 
-async function currentDraft() {
+async function currentDraft(waitForCreation = false) {
   if (releaseId === undefined) {
-    // The tag endpoint only finds published releases; authenticated listings include drafts.
-    for (let page = 1; ; page++) {
-      const releases = await github(`releases?per_page=100&page=${page}`);
-      if (!Array.isArray(releases)) throw new Error("Invalid release listing");
-      const match = releases.find((release) => release.tag_name === tag);
-      if (match) {
-        if (!Number.isSafeInteger(match.id) || match.id <= 0)
-          throw new Error("Invalid release ID");
-        releaseId = match.id;
-        break;
-      }
-      if (releases.length < 100) return null;
-    }
+    // Like gh release view, resolve draft pending tags through GraphQL.
+    const result = JSON.parse(
+      gh([
+        "api",
+        "--hostname",
+        "github.com",
+        "graphql",
+        "-f",
+        "query=query($owner:String!,$name:String!,$tag:String!){repository(owner:$owner,name:$name){release(tagName:$tag){databaseId}}}",
+        "-f",
+        "owner=SECWG",
+        "-f",
+        "name=UIR-Agent",
+        "-f",
+        `tag=${tag}`,
+      ]),
+    );
+    if (result.errors?.length || !result.data?.repository)
+      throw new Error("GitHub draft lookup failed");
+    const match = result.data.repository.release;
+    if (match === null) return null;
+    if (!Number.isSafeInteger(match?.databaseId) || match.databaseId <= 0)
+      throw new Error("Invalid release ID");
+    releaseId = match.databaseId;
   }
   // Pin the ID so a deleted/replaced draft cannot redirect subsequent uploads.
-  const release = await github(`releases/${releaseId}`, true);
-  if (!release) throw new Error("Draft release disappeared during upload");
+  let release;
+  for (let attempt = 0; ; attempt++) {
+    release = await github(`releases/${releaseId}`, true);
+    if (release) break;
+    if (!waitForCreation || attempt === 3)
+      throw new Error(
+        `GitHub cannot read draft ${tag} (ID ${releaseId}): HTTP 404`,
+      );
+    console.log(
+      `Waiting for new draft ${tag} (ID ${releaseId}) to become readable`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** attempt));
+  }
   if (
     release.id !== releaseId ||
     release.draft !== true ||
@@ -54,9 +76,11 @@ async function currentDraft() {
 }
 
 function gh(args) {
-  execFileSync("gh", args, {
+  return execFileSync("gh", args, {
     cwd: root,
-    stdio: ["ignore", "ignore", "inherit"],
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+    maxBuffer: 4 * 1024 * 1024,
     windowsHide: true,
   });
 }
@@ -98,24 +122,49 @@ try {
       "Draft contains unexpected attachments; review it before retrying",
     );
   if (!release) {
-    gh([
-      "release",
-      "create",
-      tag,
-      "--draft",
-      "--verify-tag",
-      "--title",
-      `UIR-Agent ${prepared.version}`,
-      "--notes",
-      "请等待构建流程成功结束，检查更新说明和附件后再手动发布。",
-      "--repo",
-      repository,
-    ]);
+    // Verify the existing tag, then retain the ID from the creation response.
+    const ref = await github(`git/ref/tags/${encodeURIComponent(tag)}`);
+    if (ref.ref !== `refs/tags/${tag}`)
+      throw new Error("Release tag is missing");
+    const created = JSON.parse(
+      gh([
+        "api",
+        "--hostname",
+        "github.com",
+        "--method",
+        "POST",
+        `repos/${repository}/releases`,
+        "-f",
+        `tag_name=${tag}`,
+        "-f",
+        `target_commitish=${commit}`,
+        "-F",
+        "draft=true",
+        "-F",
+        "prerelease=false",
+        "-f",
+        `name=UIR-Agent ${prepared.version}`,
+        "-f",
+        "body=请等待构建流程成功结束，检查更新说明和附件后再手动发布。",
+      ]),
+    );
+    if (
+      !Number.isSafeInteger(created.id) ||
+      created.id <= 0 ||
+      created.tag_name !== tag ||
+      created.draft !== true ||
+      created.prerelease !== false
+    )
+      throw new Error("Invalid draft creation response");
+    releaseId = created.id;
+    console.log(`Created draft ${tag} (ID ${releaseId})`);
+    release = await currentDraft(true);
   }
+  console.log(`Uploading attachments to draft ${tag} (ID ${releaseId})`);
   // Recheck draft state before each upload; never deliberately overwrite a published release.
   for (const asset of prepared.assets) {
     release = await currentDraft();
-    if (!release) throw new Error("Draft release disappeared during upload");
+    if (!release) throw new Error("Draft release could not be resolved");
     const existing = release.assets.find((entry) => entry.name === asset.name);
     if (
       existing?.state === "uploaded" &&
