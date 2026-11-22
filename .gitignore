@@ -1,0 +1,42 @@
+# Build output and local caches
+/dist/
+/.cache/
+/uir-agent
+/uir-agent.exe
+/ir-agent
+/ir-agent.exe
+node_modules/
+
+# Local-only verification files
+*_test.go
+*.test.mjs
+*.test.js
+*.test.ts
+*.spec.*
+*.test
+*.test.exe
+test/
+tests/
+testdata/
+fixtures/
+coverage/
+coverage.out
+
+# Runtime data and local configuration
+.data/
+.env
+.env.*
+!.env.example
+identity.json
+identity.lock
+recovery.pending.json
+state.db
+state.db-*
+agent.log*
+agent-crash.log*
+*.log
+*.log.*
+
+# OS files
+.DS_Store
+Thumbs.db

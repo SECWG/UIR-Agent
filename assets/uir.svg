@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <title>UIR</title>
+  <desc>A green geometric UIR monogram with aligned diagonal openings and a U-shaped negative space.</desc>
+  <g fill="#519E54">
+    <path d="M23 8H46L33 21H24L22 23V36.34314575050762L10.171572875253808 48.17157287525381L8 46V23Z"/>
+    <path fill-rule="evenodd" d="M24.17417538393405 45.482678865558334A8 8 0 0 0 38 40V24H49L58 33V38L51 44L60 56H51L45 48V56H18L15.828427124746192 53.82842712474619Z M44.5 30.5H48.5L51.5 33.5V35.5L48.5 38.5H44.5Z"/>
+    <path d="M27 24H33V40A3 3 0 0 1 27 40Z"/>
+  </g>
+</svg>

@@ -1,0 +1,21 @@
+{
+  "version": "0.4.3",
+  "source": "https://github.com/rprichard/winpty/releases/download/0.4.3/winpty-0.4.3-msvc2015.zip",
+  "archiveSha256": "35a48ece2ff4acdcbc8299d4920de53eb86b1fb41e64d2fe5ae7898931bcee89",
+  "files": [
+    {
+      "name": "winpty.dll",
+      "size": 640000,
+      "sha256": "936f611c2129600d35ab7aad45546a837f4f3a9ca7f673e5d66b48c313b9cd75",
+      "compressedSize": 211672,
+      "compressedSha256": "0f93557ea9b57c12976f29a138f0f3124cd49cdd8d1ac62f4c3b7971ccaadf72"
+    },
+    {
+      "name": "winpty-agent.exe",
+      "size": 727552,
+      "sha256": "9add1a61155ec47cf6f347faf776b746eebbde1dc9360d81b8a909da34650642",
+      "compressedSize": 247293,
+      "compressedSha256": "26439a8afb31914fc1de66273d46a9659185513f4865b53ccafd5c3c940450f5"
+    }
+  ]
+}
