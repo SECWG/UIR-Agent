@@ -5,6 +5,7 @@ import { readPreparedRelease, releaseDirectory, root } from "./release.mjs";
 const repository = "SECWG/UIR-Agent";
 const tag = process.env.RELEASE_TAG || process.env.GITHUB_REF_NAME;
 const api = `https://api.github.com/repos/${repository}`;
+const obsoleteAttachments = ["latest.json", "THIRD_PARTY_NOTICES.txt"];
 let releaseId;
 
 async function github(path, allowMissing = false) {
@@ -85,6 +86,29 @@ function gh(args) {
   });
 }
 
+function releaseBody(body, platform) {
+  const notes = (body ?? "")
+    .replace(/^Platform-(?:Min|Max-Exclusive):[^\r\n]*(?:\r?\n|$)/gim, "")
+    .trimStart();
+  const compatibility = [`Platform-Min: ${platform.min}`];
+  if (platform.maxExclusive)
+    compatibility.push(`Platform-Max-Exclusive: ${platform.maxExclusive}`);
+  return compatibility.join("\n") + (notes ? `\n\n${notes}` : "");
+}
+
+function deleteAsset(asset) {
+  if (!Number.isSafeInteger(asset.id) || asset.id <= 0)
+    throw new Error(`Invalid asset ID: ${asset.name}`);
+  gh([
+    "api",
+    "--hostname",
+    "github.com",
+    "--method",
+    "DELETE",
+    `repos/${repository}/releases/assets/${asset.id}`,
+  ]);
+}
+
 try {
   const tagPush =
     process.env.GITHUB_EVENT_NAME === "push" &&
@@ -116,7 +140,11 @@ try {
   if (
     release &&
     (!Array.isArray(release.assets) ||
-      release.assets.some((asset) => !names.includes(asset.name)))
+      release.assets.some(
+        (asset) =>
+          !names.includes(asset.name) &&
+          !obsoleteAttachments.includes(asset.name),
+      ))
   )
     throw new Error(
       "Draft contains unexpected attachments; review it before retrying",
@@ -145,7 +173,7 @@ try {
         "-f",
         `name=UIR-Agent ${prepared.version}`,
         "-f",
-        "body=请等待构建流程成功结束，检查更新说明和附件后再手动发布。",
+        `body=${releaseBody("请等待构建流程成功结束，检查更新说明和附件后再手动发布。", prepared.platform)}`,
       ]),
     );
     if (
@@ -160,6 +188,28 @@ try {
     console.log(`Created draft ${tag} (ID ${releaseId})`);
     release = await currentDraft(true);
   }
+  const body = releaseBody(release.body, prepared.platform);
+  if (body !== (release.body ?? "")) {
+    gh([
+      "api",
+      "--hostname",
+      "github.com",
+      "--method",
+      "PATCH",
+      `repos/${repository}/releases/${releaseId}`,
+      "-f",
+      `body=${body}`,
+    ]);
+    release = await currentDraft();
+  }
+  // Clean only the two retired attachments when resuming an older draft.
+  for (const name of obsoleteAttachments) {
+    release = await currentDraft();
+    for (const asset of release.assets.filter((entry) => entry.name === name)) {
+      await currentDraft();
+      deleteAsset(asset);
+    }
+  }
   console.log(`Uploading attachments to draft ${tag} (ID ${releaseId})`);
   // Recheck draft state before each upload; never deliberately overwrite a published release.
   for (const asset of prepared.assets) {
@@ -173,16 +223,7 @@ try {
     )
       continue;
     if (existing) {
-      if (!Number.isSafeInteger(existing.id) || existing.id <= 0)
-        throw new Error(`Invalid asset ID: ${asset.name}`);
-      gh([
-        "api",
-        "--hostname",
-        "github.com",
-        "--method",
-        "DELETE",
-        `repos/${repository}/releases/assets/${existing.id}`,
-      ]);
+      deleteAsset(existing);
       await currentDraft();
     }
     gh([
@@ -203,6 +244,8 @@ try {
   release = await currentDraft();
   if (!release || release.assets.length !== prepared.assets.length)
     throw new Error("Incomplete draft release");
+  if (release.body !== releaseBody(release.body, prepared.platform))
+    throw new Error("Draft platform compatibility changed during upload");
   for (const expected of prepared.assets) {
     const matching = release.assets.filter(
       (asset) => asset.name === expected.name,
@@ -211,7 +254,7 @@ try {
       matching.length !== 1 ||
       matching[0].state !== "uploaded" ||
       matching[0].size !== expected.size ||
-      (matching[0].digest && matching[0].digest !== `sha256:${expected.sha256}`)
+      matching[0].digest !== `sha256:${expected.sha256}`
     )
       throw new Error(`Uploaded asset mismatch: ${expected.name}`);
   }

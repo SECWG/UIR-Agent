@@ -224,13 +224,13 @@ export async function readPreparedRelease(tag) {
       files.every((name) => names.includes(name)),
     "Unexpected release attachment",
   );
-  const assets = [];
-  for (const name of names)
-    assets.push({
-      name,
-      ...(await fingerprint(resolve(releaseDirectory, name))),
-    });
-  return { version, tag, assets };
+  // Metadata and notices remain local build files, not Release attachments.
+  const assets = packages.map(({ name, size, sha256 }) => ({
+    name,
+    size,
+    sha256,
+  }));
+  return { version, tag, platform, assets };
 }
 
 async function prepareRelease(tag) {
