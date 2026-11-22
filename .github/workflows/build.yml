@@ -6,16 +6,90 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "运行方式：build 仅构建，draft 生成 Release 草稿"
+        type: choice
+        required: true
+        default: build
+        options: [build, draft]
+      release_tag:
+        description: "draft 必填：已有版本标签，例如 v1.0.0"
+        type: string
 
 permissions:
   contents: read
 
 jobs:
+  preflight:
+    name: Check build and release configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      draft: ${{ steps.select.outputs.draft }}
+      tag: ${{ steps.select.outputs.tag }}
+      commit: ${{ steps.check.outputs.commit }}
+    steps:
+      - name: Select build source
+        id: select
+        env:
+          CREATE_DRAFT: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.mode == 'draft') }}
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+        run: |
+          source_ref="$GITHUB_SHA"
+          tag=""
+          if [ "$CREATE_DRAFT" = "true" ]; then
+            if [ "$GITHUB_REPOSITORY" != "SECWG/UIR-Agent" ]; then
+              echo "::error::Release drafts can only be created in SECWG/UIR-Agent."
+              exit 1
+            fi
+            if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+              tag="$REQUESTED_TAG"
+              source_ref="refs/tags/$tag"
+            else
+              tag="$GITHUB_REF_NAME"
+            fi
+            if [[ ! "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+              echo "::error::Select draft and enter an existing stable release_tag, such as v1.0.0."
+              exit 1
+            fi
+          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            tag="$GITHUB_REF_NAME"
+          fi
+          echo "draft=$CREATE_DRAFT" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "source_ref=$source_ref" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.select.outputs.source_ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+      - name: Validate before compiling
+        id: check
+        env:
+          CREATE_DRAFT: ${{ steps.select.outputs.draft }}
+          RELEASE_TAG: ${{ steps.select.outputs.tag }}
+        run: |
+          if [ "$CREATE_DRAFT" = "true" ]; then
+            node scripts/release.mjs preflight "$RELEASE_TAG"
+            echo "Release configuration passed for $RELEASE_TAG; build nine programs and prepare a draft." >> "$GITHUB_STEP_SUMMARY"
+          else
+            if [ -n "$RELEASE_TAG" ]; then
+              node scripts/release.mjs check "$RELEASE_TAG"
+            fi
+            echo "Build only. No Release draft will be created." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
   standard:
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.commit }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -23,11 +97,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24.19.0
-      - name: Verify release tag
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: node scripts/release.mjs check "$RELEASE_TAG"
       - run: go mod verify
       - run: go vet ./...
       - run: node scripts/build.mjs --with-x86
@@ -50,10 +119,13 @@ jobs:
 
   windows-legacy:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    needs: preflight
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.commit }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -61,11 +133,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24.19.0
-      - name: Verify release tag
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: node scripts/release.mjs check "$env:RELEASE_TAG"
       - run: node scripts/build-legacy.mjs
       - uses: actions/upload-artifact@v4
         with:
@@ -78,17 +145,19 @@ jobs:
             dist/windows-legacy/manifest.json
 
   draft-release:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'SECWG/UIR-Agent'
-    needs: [standard, windows-legacy]
+    if: needs.preflight.outputs.draft == 'true' && github.repository == 'SECWG/UIR-Agent'
+    needs: [preflight, standard, windows-legacy]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     concurrency:
-      group: agent-release-${{ github.ref }}
+      group: agent-release-${{ needs.preflight.outputs.tag }}
       cancel-in-progress: false
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.commit }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24.19.0
@@ -102,9 +171,11 @@ jobs:
           path: dist/windows-legacy
       - name: Prepare release attachments
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
         run: node scripts/release.mjs prepare "$RELEASE_TAG"
       - name: Create or update draft
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_MODE: ${{ inputs.mode }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
         run: node scripts/draft-release.mjs

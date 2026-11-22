@@ -69,3 +69,12 @@ node scripts/build-legacy.mjs
 ```
 
 产物位于 `dist/`，兼容版位于 `dist/windows-legacy/`。
+
+## 发布
+
+发布标签对应的提交须包含本发布流程。`release.config.json` 中的 `platform.min` 为最低平台版本，首版设为 `0.0.0`，暂不限制平台版本；需要限定上界时设置 `maxExclusive`。版本与兼容范围会在编译前检查，未配置兼容范围仍可仅构建程序。
+
+- 自动：推送与源码版本一致的 `vX.Y.Z` 标签，构建九种程序后生成 Release 草稿。
+- 手动：进入 Actions → Build and prepare release → Run workflow，选择 `mode: draft`，在 `release_tag` 填写已有标签（如 `v1.0.0`）。流程使用该标签的源码与配置；`mode: build` 只构建，不创建草稿。
+
+检查草稿说明和附件后再手动发布。已正式发布的版本不会被覆盖。

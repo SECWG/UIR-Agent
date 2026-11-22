@@ -79,6 +79,10 @@ async function platformRange() {
   return platform;
 }
 
+async function checkRelease(tag) {
+  return { version: await checkVersion(tag), platform: await platformRange() };
+}
+
 async function fingerprint(file) {
   const info = await stat(file);
   requireValue(
@@ -159,8 +163,7 @@ async function thirdPartyNotices() {
 }
 
 export async function readPreparedRelease(tag) {
-  const version = await checkVersion(tag);
-  const platform = await platformRange();
+  const { version, platform } = await checkRelease(tag);
   const index = JSON.parse(
     await readFile(resolve(releaseDirectory, "latest.json"), "utf8"),
   );
@@ -231,8 +234,7 @@ export async function readPreparedRelease(tag) {
 }
 
 async function prepareRelease(tag) {
-  const version = await checkVersion(tag);
-  const platform = await platformRange();
+  const { version, platform } = await checkRelease(tag);
   const standard = JSON.parse(
     await readFile(resolve(root, "dist/manifest.json"), "utf8"),
   );
@@ -294,12 +296,17 @@ if (
   const [command, tag, ...extra] = process.argv.slice(2);
   try {
     requireValue(
-      extra.length === 0 && ["check", "prepare"].includes(command),
-      "Usage: node scripts/release.mjs <check|prepare> vX.Y.Z",
+      extra.length === 0 && ["check", "preflight", "prepare"].includes(command),
+      "Usage: node scripts/release.mjs <check|preflight|prepare> vX.Y.Z",
     );
     if (command === "check")
       console.log(`Agent ${await checkVersion(tag)} matches ${tag}`);
-    else await prepareRelease(tag);
+    else if (command === "preflight") {
+      const { version, platform } = await checkRelease(tag);
+      console.log(
+        `Agent ${version} matches ${tag}; platform >= ${platform.min}${platform.maxExclusive ? ` and < ${platform.maxExclusive}` : ""}`,
+      );
+    } else await prepareRelease(tag);
   } catch (error) {
     console.error(error.message);
     process.exitCode = 1;
