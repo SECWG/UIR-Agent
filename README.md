@@ -69,6 +69,3 @@ node scripts/build-legacy.mjs
 ```
 
 产物位于 `dist/`，兼容版位于 `dist/windows-legacy/`。
-
-发布前，在 `release.config.json` 填写已确认的平台兼容范围 `platform.min`，必要时设置 `maxExclusive`；未配置时仍可构建程序，但不会生成发布清单。
-推送与源码版本一致的 `vX.Y.Z` 标签后，GitHub Actions 构建程序并准备草稿 Release，由维护者检查后手动发布。
